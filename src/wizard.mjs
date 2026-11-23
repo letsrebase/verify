@@ -20,14 +20,30 @@ function money(c) {
   return c.currency === "USD" || !c.currency ? `$${amount.toFixed(2)}` : `${amount.toFixed(2)} ${c.currency}`;
 }
 
-/** The spinner message for a step and what the event stream has reported so far. */
-export function statusLine(status, { chars = 0, tokens = null, cost = null } = {}) {
+/** Seconds as the status line shows them: "42s", "1m 05s". */
+function clock(ms) {
+  const s = Math.max(0, Math.floor(ms / 1000));
+  return s < 60 ? `${s}s` : `${Math.floor(s / 60)}m ${String(s % 60).padStart(2, "0")}s`;
+}
+
+/**
+ * The spinner message for a step and what the event stream has reported so far. Before the
+ * first written character the narrative says which phase it is in (waiting for the model, or
+ * the model reasoning when the agent streams its thoughts), so a long first token never reads
+ * as "0 chars"; the step's elapsed time, when given, ticks at the end.
+ */
+export function statusLine(status, { chars = 0, thought = 0, tokens = null, cost = null, elapsed = null } = {}) {
   const parts = [];
-  if (status.step === "narrative") parts.push("Writing the narrative", `${kilo(chars)} chars`);
-  else parts.push("Classifying practices", `batch ${status.batch} of ${status.total}${status.retry ? " (again)" : ""}`);
+  if (status.step === "narrative") {
+    parts.push("Writing the narrative");
+    if (chars > 0) parts.push(`${kilo(chars)} chars`);
+    else if (thought > 0) parts.push(`the model is reasoning (${kilo(thought)} chars)`);
+    else parts.push("waiting for the model");
+  } else parts.push("Classifying practices", `batch ${status.batch} of ${status.total}${status.retry ? " (again)" : ""}`);
   if (tokens != null) parts.push(`${kilo(tokens)} tokens`);
   const m = cost ? money(cost) : null;
   if (m) parts.push(m);
+  if (elapsed != null) parts.push(clock(elapsed));
   return parts.join(" · ");
 }
 
@@ -255,15 +271,19 @@ export async function runWizard({ ui, deps, flags = {}, out, proc = process, now
     return 2;
   };
 
-  const live = { chars: 0, tokens: null, cost: null };
+  const live = { chars: 0, thought: 0, tokens: null, cost: null, elapsed: null };
   let paint = () => {};
   const onEvent = (e) => {
     if (e.kind === "started") {
       runDir = e.cwd;
       pid = e.pid ?? null;
     }
-    else if (e.kind === "turn-start") live.chars = 0;
+    else if (e.kind === "turn-start") {
+      live.chars = 0;
+      live.thought = 0;
+    }
     else if (e.kind === "agent_message_chunk" && e.content?.type === "text") live.chars += e.content.text.length;
+    else if (e.kind === "agent_thought_chunk" && e.content?.type === "text") live.thought += e.content.text.length;
     else if (e.kind === "usage_update") {
       if (Number.isFinite(e.used)) live.tokens = e.used;
       if (e.cost) live.cost = e.cost;
@@ -328,12 +348,17 @@ export async function runWizard({ ui, deps, flags = {}, out, proc = process, now
     spin.start(`Starting the run with ${agent.label}`);
     let status = { step: "narrative" };
     let last = -Infinity;
+    let stepStart = now();
     paint = () => {
       const t = now();
       if (t - last < REDRAW_MS) return;
       last = t;
+      live.elapsed = t - stepStart;
       spin.message(statusLine(status, live));
     };
+    // A first token can take a minute: the elapsed time ticks even when the agent sends nothing.
+    const tick = setInterval(() => paint(), 1000);
+    tick.unref?.();
     let result;
     try {
       sessionHandedOver = true;
@@ -350,6 +375,8 @@ export async function runWizard({ ui, deps, flags = {}, out, proc = process, now
         onStatus: (s) => {
           status = s;
           live.chars = 0;
+          live.thought = 0;
+          stepStart = now();
           last = -Infinity;
           paint();
         },
@@ -358,6 +385,7 @@ export async function runWizard({ ui, deps, flags = {}, out, proc = process, now
       spin.error(ctl.signal.aborted || e?.name === "AbortError" ? "Stopped" : `${agent.label} could not finish`);
       return await fail(e);
     } finally {
+      clearInterval(tick);
       // the run has closed the agent and removed what it left: nothing for the exit net to do
       proc.off("exit", onExit);
       // from here on Ctrl-C belongs to whatever comes next (the sign-in wait of submit)
