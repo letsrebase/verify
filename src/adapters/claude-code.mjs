@@ -84,11 +84,13 @@ function extractContent(content) {
   return { text, thinkingChars, signatureChars, toolUses, toolResults };
 }
 
-export function readClaudeCode(root) {
+export function readClaudeCode(root, { onProgress } = {}) {
   const files = [];
   const records = [];
 
-  for (const path of walk(root)) {
+  const paths = [...walk(root)];
+  for (const [i, path] of paths.entries()) {
+    onProgress?.({ done: i, total: paths.length });
     const buf = readFileSync(path);
     const lines = buf.toString("utf8").split("\n").filter((l) => l.trim());
     let malformed = 0;

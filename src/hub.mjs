@@ -79,8 +79,9 @@ export async function signIn(hub, {
   sleep = sleepMs,
   now = Date.now,
   log = console.log,
+  around = (_label, fn) => fn(),
 } = {}) {
-  const start = await postJson(fetchFn, `${hub}/api/hub/cli/device`, { scope: "work_profile" });
+  const start = await around("Asking rebase for a sign-in code", () => postJson(fetchFn, `${hub}/api/hub/cli/device`, { scope: "work_profile" }));
   if (!start.res.ok) {
     throw new Error(`could not start the sign-in (${start.res.status}): ${start.data.detail || start.data.error || "no answer from the hub"}`);
   }
@@ -105,32 +106,34 @@ export async function signIn(hub, {
   log(`Waiting for you to approve (the code is valid ${Math.round(expiresIn / 60)} minutes)...`);
 
   const deadline = now() + expiresIn * 1000 + 30_000;
-  for (;;) {
-    await sleep(interval * 1000);
-    let data = null;
-    try {
-      const answer = await postJson(fetchFn, `${hub}/api/hub/cli/token`, { device_code });
-      if (answer.res.status < 500) data = answer.parsed;
-    } catch {
-      data = null;
+  return around("Waiting for you to approve the sign-in in your browser", async () => {
+    for (;;) {
+      await sleep(interval * 1000);
+      let data = null;
+      try {
+        const answer = await postJson(fetchFn, `${hub}/api/hub/cli/token`, { device_code });
+        if (answer.res.status < 500) data = answer.parsed;
+      } catch {
+        data = null;
+      }
+      // A network error, a 5xx or a non-JSON answer is a hiccup, not a verdict (RFC 8628 § 3.5):
+      // back off and keep polling until the code expires.
+      if (!data) data = { error: "slow_down" };
+      if (data.access_token) return data.access_token;
+      switch (data.error) {
+        case "authorization_pending":
+          break;
+        case "slow_down":
+          interval += 5;
+          break;
+        case "access_denied":
+          throw new Error("you pressed «Annulla» in the browser, so nothing was sent. Run submit again when you want to send the profile.");
+        case "expired_token":
+          throw new Error("the code expired before it was approved, so nothing was sent. Run submit again for a new code.");
+        default:
+          throw new Error(`the hub answered the sign-in with an error: ${data.error || data.detail || "unknown"}`);
+      }
+      if (now() > deadline) throw new Error("the sign-in took too long, so nothing was sent. Run submit again for a new code.");
     }
-    // A network error, a 5xx or a non-JSON answer is a hiccup, not a verdict (RFC 8628 § 3.5):
-    // back off and keep polling until the code expires.
-    if (!data) data = { error: "slow_down" };
-    if (data.access_token) return data.access_token;
-    switch (data.error) {
-      case "authorization_pending":
-        break;
-      case "slow_down":
-        interval += 5;
-        break;
-      case "access_denied":
-        throw new Error("you pressed «Annulla» in the browser, so nothing was sent. Run submit again when you want to send the profile.");
-      case "expired_token":
-        throw new Error("the code expired before it was approved, so nothing was sent. Run submit again for a new code.");
-      default:
-        throw new Error(`the hub answered the sign-in with an error: ${data.error || data.detail || "unknown"}`);
-    }
-    if (now() > deadline) throw new Error("the sign-in took too long, so nothing was sent. Run submit again for a new code.");
-  }
+  });
 }

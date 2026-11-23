@@ -18,6 +18,7 @@ const command = readFileSync(new URL("../.claude/commands/rebase-verify.md", imp
 const profileSrc = readFileSync(new URL("../src/profile.mjs", import.meta.url), "utf8");
 const llmSrc = readFileSync(new URL("../src/profile-llm.mjs", import.meta.url), "utf8");
 const binSrc = readFileSync(new URL("../bin/rebase-verify.mjs", import.meta.url), "utf8");
+const pipelineSrc = readFileSync(new URL("../src/pipeline.mjs", import.meta.url), "utf8");
 
 test("slash command schema covers every narrative key assembleProfile consumes", () => {
   const keys = new Set([...profileSrc.matchAll(/narrative\?\.([a-z_]+)/g)].map((m) => m[1]));
@@ -37,7 +38,7 @@ test("LLM system prompt schema covers the same narrative keys", () => {
 
 test("CLI output strings quoted in the slash command still exist in the CLI", () => {
   assert.ok(!/rappresentativ/i.test(command), "slash command quotes the old Italian CLI output");
-  assert.ok(binSrc.includes("representative:"), "CLI no longer prints the 'representative:' line the slash command refers to");
+  assert.ok(pipelineSrc.includes("representative:"), "CLI no longer prints the 'representative:' line the slash command refers to");
   assert.ok(command.includes("representative:"), "slash command no longer quotes the 'representative:' CLI line");
 });
 
