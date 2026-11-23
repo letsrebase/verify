@@ -143,7 +143,7 @@ test("assembleProfile carries techUsage and defaults it to null (old shape uncha
 });
 
 test("profile.md renders the block deterministically, with the zone when not UTC", () => {
-  const profile = { ...assembleProfile({ contact: { name: "X" }, projects: [baseProj], narrative: null, fingerprint: null, forensics: null, techUsage: usage() }) };
+  const profile = { ...assembleProfile({ contact: { name: "X" }, projects: [baseProj], narrative: null, fingerprint: null, forensics: null, techUsage: usage(), language: "en" }) };
   const md = renderMarkdown(profile);
   assert.ok(md.includes("## Technology usage"));
   assert.ok(md.includes("- Supabase: continuous · 14 sessions · 2 products · 7 months (2026-01 to 2026-08)"), md);

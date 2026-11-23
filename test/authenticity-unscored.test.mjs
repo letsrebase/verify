@@ -62,6 +62,7 @@ test("profile renders 'n/a' (not 'null/100') and discloses the reason when unsco
     fingerprint: { manifest: { bundleHash: "abc" } },
     forensics,
     manifestHash: "abc",
+    language: "en",
     sources: [{ source: "opencode", captureLevel: "structural", sessions: 1, backend: "json" }],
   });
   assert.equal(profile.authenticity.score, null);

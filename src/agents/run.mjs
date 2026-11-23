@@ -4,7 +4,7 @@
 // before anything is used. The agent's transcript is removed afterwards.
 import { appendFileSync } from "node:fs";
 import { PRACTICES_WARN_WHAT, classifyPractices } from "../practices-llm.mjs";
-import { MODEL, NARRATIVE_SYSTEM, anthropicCall, validateNarrative, warnApiKey } from "../profile-llm.mjs";
+import { MODEL, anthropicCall, narrativeSystem, validateNarrative, warnApiKey } from "../profile-llm.mjs";
 import { AgentAuthError, AgentStartError, ModelNotOfferedError, ToolUseError, startAgent } from "./acp.mjs";
 import { firstJsonObject } from "./json-answer.mjs";
 
@@ -50,7 +50,7 @@ export async function runWithAgent({ agent, model, narrativeInput, practicesInpu
     let narrative;
     for (let attempt = 0; !narrative; attempt++) {
       onStatus({ step: "narrative", retry: attempt > 0 });
-      const text = await ask(NARRATIVE_SYSTEM, JSON.stringify(narrativeInput));
+      const text = await ask(narrativeSystem(narrativeInput.language), JSON.stringify(narrativeInput));
       try {
         narrative = validateNarrative(firstJsonObject(text), agent.id);
       } catch (e) {

@@ -3,6 +3,8 @@
 // prose fields come from the narrative step. The Markdown is just a view, so
 // human and agent never diverge.
 
+import { DEFAULT_LANGUAGE, codeLabel, labelsFor } from "./languages.mjs";
+
 // --- representative selection: significance leads, diversity breaks ties -----
 //
 // The pick is driven by how SIGNIFICANT the work is, not by how many chat
@@ -184,7 +186,7 @@ export function summarizeSources(parsed) {
 
 // --- assemble ----------------------------------------------------------------
 
-export function assembleProfile({ contact, projects, narrative, fingerprint, forensics, manifestHash, trajectory, groundedness, aiRelationship, agenticLiteracy, intensity, distribution, techUsage, practices, sources, generatedBy }) {
+export function assembleProfile({ contact, projects, narrative, fingerprint, forensics, manifestHash, trajectory, groundedness, aiRelationship, agenticLiteracy, intensity, distribution, techUsage, practices, sources, generatedBy, language = DEFAULT_LANGUAGE }) {
   const froms = projects.map((p) => p.from).filter(Boolean).sort();
   const tos = projects.map((p) => p.to).filter(Boolean).sort();
   const selected = projects.filter((p) => p.selected);
@@ -193,6 +195,8 @@ export function assembleProfile({ contact, projects, narrative, fingerprint, for
 
   return {
     schema: "playnew-profile/v1",
+    // The language every prose field and the rendered profile.md are written in (a code from src/languages.mjs).
+    language,
     generatedAt: new Date().toISOString(),
     // Optional and nullable: the schema keeps the field for readers of older profiles, but this tool no
     // longer asks for it (the hub's sign-in identifies the person) and `submit` never sends it.
@@ -299,42 +303,34 @@ export function assembleProfile({ contact, projects, narrative, fingerprint, for
 
 // --- render -------------------------------------------------------------------
 
-const land = (l) =>
-  `commits ${l.commits} · reverts ${l.reverts} · churn ${l.revertChurn}${l.checksRun ? " · checks passed" : ""}`;
-
 export function renderMarkdown(p) {
+  const T = labelsFor(p.language);
+  const code = (c) => codeLabel(T, c);
+  const codes = (list) => list.map(code).join(" · ");
   const L = [];
   const c = p.contact || {};
-  L.push(`# Agentic profile${c.name ? ` — ${c.name}` : ""}`);
+  L.push(`# ${T.title(c.name)}`);
   const meta = [c.email, c.city, c.status].filter(Boolean).join(" · ");
   if (meta) L.push(meta);
-  L.push(
-    `Window: ${p.window.from} → ${p.window.to} · ${p.volume.sessions} sessions · ${p.volume.instructions} instructions · ${p.volume.products} products`,
-  );
-  L.push(`Log consistency screen: ${p.authenticity.score == null ? "n/a" : `${p.authenticity.score}/100`} (${p.authenticity.note})`);
+  L.push(T.window(p));
+  L.push(T.screen(p.authenticity.score, p.authenticity.note));
   if (p.sources?.length) {
-    const src = p.sources
-      .map((s) => `${s.source} (${s.captureLevel} capture${s.backend ? `, ${s.backend}` : ""}) · ${s.sessions} sessions read`)
-      .join(" · ");
-    L.push(`Sources: ${src}`);
-    L.push(`Window and counts are lower bounds: logs rotate and old sessions are pruned.`);
+    L.push(T.sources(p.sources.map(T.source).join(" · ")));
+    L.push(T.lowerBounds);
   }
   if (p.summary) L.push(`\n${p.summary}`);
 
   if (p.domains?.length) {
-    L.push(`\n## Domains`);
-    for (const d of p.domains) {
-      const note = d.note ? ` — ${d.note}` : "";
-      L.push(`- **${d.label}** · ${d.products} products · ${d.sessions} sessions${note}`);
-    }
+    L.push(`\n## ${T.domains}`);
+    for (const d of p.domains) L.push(T.domainLine(d, d.note));
   }
 
-  L.push(`\n## Representative projects`);
+  L.push(`\n## ${T.representative}`);
   for (const pr of p.projects) {
     const headTail = pr.repoLabel ? ` _(${pr.id} — ${pr.repoLabel})_` : ` _(${pr.id})_`;
-    L.push(`\n### ${pr.domain || "(domain)"}  ·  ${pr.type.join(" · ")}${headTail}`);
-    L.push(`${pr.span.from ?? "n/a"}→${pr.span.to ?? "n/a"} · ${pr.sessions} sessions · ${land(pr.landing)}`);
-    if (pr.tech.length) L.push(`stack: ${pr.tech.join(", ")}`);
+    L.push(`\n### ${pr.domain || T.domainFallback}  ·  ${codes(pr.type)}${headTail}`);
+    L.push(T.projectLine(pr, T.landing(pr.landing)));
+    if (pr.tech.length) L.push(T.stack(pr.tech.join(", ")));
     // The orchestration data candidate.json submits, on the human review
     // surface too. Rendered only when it says something (multi-tool, dispatch
     // or delegation counts) — a single-tool zero line is noise, and the exact
@@ -343,131 +339,126 @@ export function renderMarkdown(p) {
     if (o && (o.toolCount >= 2 || o.dispatchCommands > 0 || o.delegation > 0)) {
       const bits = [];
       const tools = Object.entries(o.tools ?? {}).map(([k, v]) => `${k} ${v}`).join(" + ");
-      if (o.toolCount >= 2 && tools) {
-        bits.push(`sessions by tool: ${tools}${o.toolOverlap === false ? " (different periods)" : ""}`);
-      }
-      if (o.dispatchCommands > 0) bits.push(`${o.dispatchCommands} agent dispatches`);
-      if (o.delegation > 0) bits.push(`${o.delegation} sub-agent delegations`);
-      L.push(`orchestration: ${bits.join(" · ")}`);
+      if (o.toolCount >= 2 && tools) bits.push(T.sessionsByTool(tools, o.toolOverlap === false));
+      if (o.dispatchCommands > 0) bits.push(T.dispatches(o.dispatchCommands));
+      if (o.delegation > 0) bits.push(T.delegations(o.delegation));
+      L.push(T.orchestration(bits.join(" · ")));
     }
     if (pr.did) L.push(pr.did);
-    if (pr.whyRepresentative) L.push(`_why representative:_ ${pr.whyRepresentative}`);
-    L.push(`artifact: ${pr.artifact ? pr.artifact.label : "— (none attached)"}`);
+    if (pr.whyRepresentative) L.push(`_${T.whyRepresentative}_ ${pr.whyRepresentative}`);
+    L.push(T.artifact(pr.artifact));
   }
 
   if (p.otherProjects.length) {
-    L.push(`\n## Other projects (inventory)`);
+    L.push(`\n## ${T.otherProjects}`);
     for (const o of p.otherProjects) {
       const tag = o.repoLabel ? ` _(${o.repoLabel})_` : "";
-      L.push(`- ${o.type.join(" · ")} · ${o.span.from ?? "n/a"}→${o.span.to ?? "n/a"} · ${o.sessions} sess${tag}`);
+      L.push(T.otherLine(o, codes(o.type), tag));
     }
   }
 
-  L.push(`\n## Cognitive profile`);
-  if (p.cognitive.tags.length) L.push(`tags: ${p.cognitive.tags.join(" · ")}`);
+  L.push(`\n## ${T.cognitive}`);
+  if (p.cognitive.tags.length) L.push(`${T.tags} ${codes(p.cognitive.tags)}`);
   if (p.cognitive.narrative) L.push(p.cognitive.narrative);
 
   if (p.aiRelationship) {
-    L.push(`\n## How they work with the AI`);
-    L.push(`${p.aiRelationship.directing}% directing · ${p.aiRelationship.coThinking}% co-thinking · ${p.aiRelationship.mode}`);
+    L.push(`\n## ${T.aiHeading}`);
+    L.push(T.aiLine(p.aiRelationship, code(p.aiRelationship.mode)));
     if (p.aiRelationship.narrative) L.push(p.aiRelationship.narrative);
   }
 
   if (p.intensity) {
     const i = p.intensity;
-    L.push(`\n## Practice intensity`);
-    const tzNote = i.timezone && i.timezone !== "UTC" ? ` (days counted in ${i.timezone})` : "";
-    L.push(`- Active days: ${i.activeDays} / ${i.observedDays} (${Math.round(i.activeDaysRatio * 100)}%)${tzNote}`);
-    L.push(`- Median sessions per active day: ${i.medianSessionsPerActiveDay}`);
-    L.push(`- Median session depth: ${i.medianSessionToolCalls} tool calls`);
-    L.push(`- Longest streak: ${i.longestStreak} consecutive days`);
-    L.push(`- Peak day: ${i.peakDayToolCalls} tool calls`);
-    L.push(`Cadence: ${i.cadence} · ${i.sessionShape}`);
+    L.push(`\n## ${T.intensity}`);
+    const tzNote = i.timezone && i.timezone !== "UTC" ? T.daysNote(i.timezone) : "";
+    L.push(T.activeDays(i, tzNote));
+    L.push(T.medianSessionsPerDay(i.medianSessionsPerActiveDay));
+    L.push(T.medianDepth(i.medianSessionToolCalls));
+    L.push(T.streak(i.longestStreak));
+    L.push(T.peakDay(i.peakDayToolCalls));
+    L.push(T.cadence(code(i.cadence), code(i.sessionShape)));
     if (i.narrative) L.push(`\n${i.narrative}`);
   }
 
   if (p.distribution) {
     const d = p.distribution;
-    L.push(`\n## Work distribution`);
-    L.push(`- Sessions per product: median ${d.medianSessionsPerProduct} · mean ${d.meanSessionsPerProduct}`);
-    L.push(`- Top 3 products: ${Math.round(d.top3Share * 100)}% of all sessions`);
-    L.push(`- Multi-month products: ${d.multiMonthProducts} / ${d.products} (${Math.round(d.multiMonthShare * 100)}%)`);
-    L.push(`Shape: ${d.shape}`);
+    L.push(`\n## ${T.distribution}`);
+    L.push(T.perProduct(d));
+    L.push(T.top3(d));
+    L.push(T.multiMonth(d));
+    L.push(T.shape(code(d.shape)));
     if (d.narrative) L.push(`\n${d.narrative}`);
   }
 
   if (p.techUsage?.technologies?.length) {
     const u = p.techUsage;
-    const tzNote = u.timezone && u.timezone !== "UTC" ? ` (months counted in ${u.timezone})` : "";
-    L.push(`\n## Technology usage`);
-    L.push(`Counts per technology detected in the stack, across all products${tzNote}. Sessions are those of the products where it was detected. The band only labels the month counts.`);
+    const tzNote = u.timezone && u.timezone !== "UTC" ? T.monthsNote(u.timezone) : "";
+    L.push(`\n## ${T.techUsage}`);
+    L.push(T.techIntro(tzNote));
     for (const t of u.technologies) {
-      const span = t.firstMonth === t.lastMonth ? t.firstMonth : `${t.firstMonth} to ${t.lastMonth}`;
-      L.push(`- ${t.name}: ${t.band} · ${t.sessions} sessions · ${t.products} ${t.products === 1 ? "product" : "products"} · ${t.months} ${t.months === 1 ? "month" : "months"} (${span})`);
+      const span = t.firstMonth === t.lastMonth ? t.firstMonth : `${t.firstMonth} ${T.to} ${t.lastMonth}`;
+      L.push(T.techLine(t, code(t.band), span));
     }
   }
 
   if (p.practices?.items?.length) {
     const u = p.practices;
-    const tzNote = u.timezone && u.timezone !== "UTC" ? ` (months counted in ${u.timezone})` : "";
-    L.push(`\n## How the work is done`);
-    L.push(`Counts of sessions where a practice was seen, out of the sessions where it could have been${tzNote}. Each row says how it was counted: by code, or by the person's own model.`);
-    for (const t of u.items) {
-      const how = t.method === "model" ? "classified by the person's model" : "counted by code";
-      L.push(`- ${t.id}: in ${t.seen} of ${t.of} ${t.of === 1 ? "session" : "sessions"} · ${t.products} ${t.products === 1 ? "product" : "products"} · ${t.months} ${t.months === 1 ? "month" : "months"} · ${how}`);
-    }
+    const tzNote = u.timezone && u.timezone !== "UTC" ? T.monthsNote(u.timezone) : "";
+    L.push(`\n## ${T.practices}`);
+    L.push(T.practicesIntro(tzNote));
+    for (const t of u.items) L.push(T.practiceLine(t, code(t.id), t.method === "model" ? T.byModel : T.byCode));
   }
 
   if (p.agenticLiteracy) {
     const a = p.agenticLiteracy;
-    L.push(`\n## Agentic literacy`);
-    L.push(`Uses`);
-    L.push(`- Sub-agent delegations: ${a.uses.subagentDelegations}`);
-    L.push(`- Task tracking events: ${a.uses.taskTrackingEvents}`);
-    L.push(`- Built-in slash commands invoked: ${a.uses.builtinSlashInvocations}`);
-    L.push(`- Custom skills/commands: ${a.uses.customSkillsCommands.distinct} distinct, ${a.uses.customSkillsCommands.invocations} invocations`);
-    L.push(`- Public MCP servers: ${a.uses.publicMcp.servers} · ${a.uses.publicMcp.calls} calls`);
-    L.push(`- Custom MCP servers: ${a.uses.customMcp.servers} · ${a.uses.customMcp.tools} tools · ${a.uses.customMcp.calls} calls`);
-    L.push(`\nBuilds`);
-    L.push(`- Skills authored: ${a.builds.skillsAuthored}`);
-    L.push(`- Commands authored: ${a.builds.commandsAuthored}`);
-    L.push(`- Agents authored: ${a.builds.agentsAuthored}`);
-    L.push(`- Hooks edited: ${a.builds.hooksEdited}`);
-    L.push(`- Project memory files (CLAUDE.md): ${a.builds.projectMemoryFiles}`);
-    L.push(`\nDesigns`);
-    L.push(`- Plans-first (ExitPlanMode): ${a.designs.plansFirst}`);
-    L.push(`- Subtask tracking (TodoWrite): ${a.designs.subtaskTracking}`);
-    L.push(`- Clarifies (AskUserQuestion): ${a.designs.clarifies}`);
+    L.push(`\n## ${T.literacy}`);
+    L.push(T.uses);
+    L.push(T.subagentDelegations(a.uses.subagentDelegations));
+    L.push(T.taskTracking(a.uses.taskTrackingEvents));
+    L.push(T.builtinSlash(a.uses.builtinSlashInvocations));
+    L.push(T.customSkills(a.uses.customSkillsCommands));
+    L.push(T.publicMcp(a.uses.publicMcp));
+    L.push(T.customMcp(a.uses.customMcp));
+    L.push(`\n${T.builds}`);
+    L.push(T.skillsAuthored(a.builds.skillsAuthored));
+    L.push(T.commandsAuthored(a.builds.commandsAuthored));
+    L.push(T.agentsAuthored(a.builds.agentsAuthored));
+    L.push(T.hooksEdited(a.builds.hooksEdited));
+    L.push(T.memoryFiles(a.builds.projectMemoryFiles));
+    L.push(`\n${T.designs}`);
+    L.push(T.plansFirst(a.designs.plansFirst));
+    L.push(T.subtaskTracking(a.designs.subtaskTracking));
+    L.push(T.clarifies(a.designs.clarifies));
     if (a.narrative) L.push(`\n${a.narrative}`);
   }
 
   // Trajectory: what changed strategically over the window. Numbers first, then
   // the LLM narrative, then the principles the candidate codified for themselves.
   if (p.trajectory) {
-    L.push(`\n## Trajectory`);
+    L.push(`\n## ${T.trajectory}`);
     if (p.trajectory.narrative) L.push(p.trajectory.narrative);
 
     if (p.trajectory.shifts && p.trajectory.shifts.deltas) {
-      L.push(`\nBehavioral shifts (early → late half${p.trajectory.shifts.midpoint ? `, split at ${p.trajectory.shifts.midpoint}` : ""}):`);
+      L.push(`\n${T.shifts(p.trajectory.shifts.midpoint)}`);
       for (const d of p.trajectory.shifts.deltas) {
         const arrow = d.dir === "up" ? "↑" : d.dir === "down" ? "↓" : d.dir === "stable" ? "·" : "";
-        L.push(`- ${d.metric}: ${formatVal(d.early, d.format)} → ${formatVal(d.late, d.format)} ${arrow}`);
+        L.push(`- ${code(d.metric)}: ${formatVal(d.early, d.format)} → ${formatVal(d.late, d.format)} ${arrow}`);
       }
     }
 
     if (p.trajectory.topics?.length) {
-      L.push(`\nTopics explored, by quarter:`);
+      L.push(`\n${T.topics}`);
       for (const q of p.trajectory.topics) {
-        L.push(`- ${q.quarter}: ${q.themes.map((t) => `${t.name} (${t.count})`).join(", ")}`);
+        L.push(`- ${q.quarter}: ${q.themes.map((t) => `${code(t.name)} (${t.count})`).join(", ")}`);
       }
     }
 
     if (p.trajectory.newVocabulary?.length) {
-      L.push(`\nNew vocabulary adopted: ${p.trajectory.newVocabulary.join(", ")}`);
+      L.push(`\n${T.vocabulary(p.trajectory.newVocabulary.join(", "))}`);
     }
 
     if (p.trajectory.principlesAdopted?.length) {
-      L.push(`\nPrinciples codified:`);
+      L.push(`\n${T.principles}`);
       for (const pr of p.trajectory.principlesAdopted) {
         const when = pr.when ? `_${pr.when}_ — ` : "";
         L.push(`- ${when}${pr.text}`);
@@ -476,14 +467,14 @@ export function renderMarkdown(p) {
   }
 
   if (p.stackAdopted?.length) {
-    L.push(`\n## Stack adopted`);
+    L.push(`\n## ${T.stackAdopted}`);
     L.push(p.stackAdopted.join(", "));
     // Disclosed boundaries — detection reads package.json + touched files, never
     // .env: (1) deps reflect the repo as it stands now, not at session time;
     // (2) npm manifests only — no pyproject/requirements; (3) deps are absent if
     // the project folder no longer exists; (4) REST-only services (an API key,
     // no package) are not auto-detected.
-    L.push(`_Stack as currently declared in the repo: from package.json dependencies (npm manifests only) and the files touched. Dependencies are unavailable if the project folder no longer exists, and services used only over REST (no package) are not auto-detected._`);
+    L.push(T.stackNote);
   }
 
   return L.join("\n") + "\n";

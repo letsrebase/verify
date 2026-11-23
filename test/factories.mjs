@@ -22,6 +22,7 @@ export const sess = (source, repo, cmds = [], { ts = "2026-05-01T10:00:00.000Z" 
 // A coherent playnew-profile/v1 baseline: clone, mutate, assert.
 export const baseProfile = () => ({
   schema: "playnew-profile/v1",
+  language: "en",
   contact: { name: "X", email: "x@y.io", city: "Milano", status: "employed" },
   window: { from: "2026-01", to: "2026-05" },
   volume: { products: 30, sessions: 236, instructions: 3800 },

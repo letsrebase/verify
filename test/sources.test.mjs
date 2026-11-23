@@ -114,6 +114,7 @@ test("summarizeSources: a kimi session reports structural capture in its own gro
 });
 
 const assembleArgs = (extra = {}) => ({
+  language: "en",
   contact: { name: "X", email: "x@y.z", city: "C", status: "freelance" },
   projects: [{ repo: "app", selected: true, type: ["feature-work"], from: "2026-05", to: "2026-05", sessions: 3, userMessages: 9, tech: [], landing: {}, researchToMutation: null, delegation: 0, topAreas: {} }],
   narrative: null,
