@@ -155,3 +155,51 @@ test("practices counts support a narrative citing them", () => {
   p.practices = null;
   assert.ok(assessGroundedness(p).anomalies.some((a) => a.kind === "number"));
 });
+
+// Number anchors follow the payload's language (REB-1156). A profile with no
+// `language` predates the field and reads as English.
+function withVolume(sessions, language) {
+  const p = baseProfile();
+  p.volume.sessions = sessions;
+  p.sources = [];
+  if (language) p.language = language;
+  return p;
+}
+
+const numberAnomalies = (g) => g.anomalies.filter((a) => a.kind === "number" || a.kind === "percent");
+
+test("it: a dot groups thousands and a comma is the decimal mark", () => {
+  const p = withVolume(2500, "it");
+  p.summary = "Circa 2.500 sessioni.";
+  assert.deepEqual(numberAnomalies(assessGroundedness(p)), []);
+  const q = withVolume(1168, "it");
+  q.intensity = { ...q.intensity, medianSessionToolCalls: 1.13 };
+  q.summary = "Ci sono 1.168 deleghe e una mediana di 2,13 chiamate."; // 2,13 is not in the data
+  const anomalies = numberAnomalies(assessGroundedness(q));
+  assert.deepEqual(anomalies.map((a) => a.anchor), ["2,13"]);
+  q.summary = "Ci sono 1.168 deleghe.";
+  assert.deepEqual(numberAnomalies(assessGroundedness(q)), []);
+});
+
+test("it: a decimal percent anchors whole", () => {
+  const p = withVolume(300, "it");
+  p.intensity = { ...p.intensity, activeDaysRatio: 0.125 };
+  p.summary = "Attivo nel 12,5% dei giorni.";
+  assert.deepEqual(assessGroundedness(p).anomalies.filter((a) => a.kind === "percent"), []);
+  p.summary = "Attivo nel 5% dei giorni.";
+  assert.equal(assessGroundedness(p).anomalies.filter((a) => a.kind === "percent").length, 1);
+});
+
+test("en: a comma groups thousands and a dot is the decimal mark", () => {
+  for (const language of ["en", undefined]) {
+    const p = withVolume(1168, language);
+    p.summary = "There are 1,168 delegations.";
+    assert.deepEqual(numberAnomalies(assessGroundedness(p)), [], String(language));
+  }
+  const p = withVolume(2500, "en");
+  p.summary = "About 2.500 sessions."; // read as 2.5, which is not in the data
+  assert.equal(numberAnomalies(assessGroundedness(p)).length, 1);
+  p.intensity = { ...p.intensity, activeDaysRatio: 0.125 };
+  p.summary = "Active on 12.5% of days.";
+  assert.deepEqual(assessGroundedness(p).anomalies.filter((a) => a.kind === "percent"), []);
+});
