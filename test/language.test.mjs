@@ -3,12 +3,13 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
 import { DEFAULT_LANGUAGE, LANGUAGES, SUPPORTED_LANGUAGES } from "../src/languages.mjs";
 import { narrativeInputFor, narrativeSystem } from "../src/profile-llm.mjs";
 import { assembleProfile, renderMarkdown } from "../src/profile.mjs";
 import { baseProfile } from "./factories.mjs";
 
-const BIN = new URL("../bin/rebase-verify.mjs", import.meta.url).pathname;
+const BIN = fileURLToPath(new URL("../bin/rebase-verify.mjs", import.meta.url));
 
 test("--lang rejects an unknown code and lists the supported ones", () => {
   const r = spawnSync(process.execPath, [BIN, "prepare", "--lang", "xx"], { encoding: "utf8" });
