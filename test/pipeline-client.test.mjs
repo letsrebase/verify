@@ -10,12 +10,13 @@ import { startPipeline } from "../src/pipeline-client.mjs";
 
 const OFF = Object.fromEntries(["opencode", "codex", "pi", "omp", "cursor", "kimi"].map((id) => [id, { disabled: true }]));
 
-// A tree of Claude Code logs: `files` sessions of `turns` exchanges each.
+// A tree of Claude Code logs: `files` sessions of `turns` exchanges each. The project's cwd is
+// not under /tmp: the digest leaves scratch roots out of the profile.
 function logs(tmp, files, turns) {
   const root = join(tmp, "projects");
-  const proj = join(root, "-tmp-demo");
+  const proj = join(root, "-srv-work-demo");
   mkdirSync(proj, { recursive: true });
-  const cwd = join(tmp, "demo");
+  const cwd = "/srv/work/demo";
   for (let f = 0; f < files; f++) {
     const lines = [];
     for (let t = 0; t < turns; t++) {
