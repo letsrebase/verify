@@ -242,6 +242,13 @@ test("the status line shows the phase, characters, batches and usage", () => {
   assert.equal(statusLine({ step: "practices", batch: 2, total: 6 }, { chars: 0, cost: { amount: 0.0213, currency: "USD" } }), "Classifying practices · batch 2 of 6 · $0.02");
 });
 
+test("before the first written character the narrative says the phase, and the elapsed time ticks", () => {
+  assert.equal(statusLine({ step: "narrative" }, { elapsed: 4200 }), "Writing the narrative · waiting for the model · 4s");
+  assert.equal(statusLine({ step: "narrative" }, { thought: 2300, elapsed: 65000 }), "Writing the narrative · the model is reasoning (2.3k chars) · 1m 05s");
+  assert.equal(statusLine({ step: "narrative" }, { chars: 80, thought: 2300, elapsed: 70000 }), "Writing the narrative · 80 chars · 1m 10s");
+  assert.equal(statusLine({ step: "practices", batch: 1, total: 6 }, { elapsed: 3000 }), "Classifying practices · batch 1 of 6 · 3s");
+});
+
 test("live status redraws at most every 100 ms", async () => {
   const ui = fakeUi();
   const { deps } = fakeDeps();
