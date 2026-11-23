@@ -2,8 +2,9 @@
 // functions and every reader, agent and writer are injected.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
-import { mkdtempSync, rmSync, existsSync } from "node:fs";
+import { spawn, spawnSync } from "node:child_process";
+import { copyFileSync, mkdirSync, mkdtempSync, rmSync, existsSync } from "node:fs";
+import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -25,7 +26,7 @@ function fakeUi(answers = {}) {
   const queue = Object.fromEntries(Object.entries(answers).map(([k, v]) => [k, [...v]]));
   const take = (kind, dflt) => {
     const q = queue[kind];
-    return q && q.length ? q.shift() : dflt;
+    return q && q.length ? (q.shift() ?? dflt) : dflt;
   };
   const spin = () => ({
     start: (m) => calls.push(["spinner.start", m]),
@@ -49,18 +50,17 @@ function fakeUi(answers = {}) {
   };
 }
 
-const bundle = (source, n) => ({ source, files: [], sessions: Array.from({ length: n }, () => ({ source })), compactionSummaries: [], redaction: { hits: 0, charsRemoved: 0 } });
+const read = (n) => ({ sessions: n });
 
 function fakeDeps(over = {}) {
   const state = { closed: 0, started: [], ran: [], finished: [], submitted: 0, prepared: [] };
   const session = { models: [{ id: "m1", name: "Model one" }, { id: "m2", name: "Model two" }], currentModel: "m2", close: async () => void state.closed++ };
   const deps = {
     sources: [{ id: "claude-code", label: "Claude Code" }, { id: "omp", label: "oh-my-pi" }, { id: "codex", label: "Codex" }],
-    readSource: (id) => bundle(id, { "claude-code": 10, omp: 30, codex: 0 }[id]),
-    combine: (bundles) => ({ bundles, sessions: bundles.flatMap((b) => b.sessions) }),
+    readSource: async (id) => read({ "claude-code": 10, omp: 30, codex: 0 }[id]),
     availableAgents: (by) => [agentEntry("omp", { sessions: by.omp ?? 0 }), agentEntry("claude-code", { sessions: by["claude-code"] ?? 0 }), agentEntry("kimi")],
     defaultAgent: (l) => l[0],
-    prepare: (parsed) => (state.prepared.push(parsed), { narrativeInput: { n: 1 }, practicesInput: { p: 1 } }),
+    prepare: async (ids) => (state.prepared.push(ids), { narrativeInput: { n: 1 }, practicesInput: { p: 1 } }),
     startAgent: async (spec, opts) => {
       state.started.push({ spec, opts });
       opts.onEvent?.({ kind: "started", cwd: "/tmp/rebase-verify-agent-run-x", pid: 4242 });
@@ -71,7 +71,8 @@ function fakeDeps(over = {}) {
       args.onStatus({ step: "narrative" });
       return { narrative: {}, practicesAnswers: null, used: { agent: args.agent.id, model: args.model ?? null } };
     },
-    finish: (prepared, run) => (state.finished.push(run), { sessions: 40, products: 3, practices: [{ id: "checks_before_commit", seen: 4, of: 9 }], file: "out/profile.md" }),
+    finish: async (run) => (state.finished.push(run), { sessions: 40, products: 3, practices: [{ id: "checks_before_commit", seen: 4, of: 9 }], file: "out/profile.md" }),
+    sendNotice: () => "About to send to rebase (https://hub.test):\n  profile: 40 sessions, 3 products",
     submit: async () => void state.submitted++,
     ...over,
   };
@@ -81,7 +82,7 @@ function fakeDeps(over = {}) {
 const run = (ui, deps, extra = {}) => runWizard({ ui, deps, flags: { version: "1.2.3", ...extra }, out: "out", proc: new EventEmitter(), now: () => 0 });
 const kinds = (ui, k) => ui.calls.filter((c) => c[0] === k);
 
-test("accepting every default picks the default agent and the current model, sends nothing", async () => {
+test("accepting every default picks the default agent and the current model, then sends once", async () => {
   const ui = fakeUi();
   const { deps, state } = fakeDeps();
   const code = await run(ui, deps);
@@ -89,7 +90,9 @@ test("accepting every default picks the default agent and the current model, sen
   const [multi] = kinds(ui, "multiselect");
   assert.deepEqual(multi[1].options.map((o) => o.value), ["claude-code", "omp"], "sources without sessions are not offered");
   assert.deepEqual(multi[1].initialValues, ["claude-code", "omp"]);
-  const [agentSel, modelSel, submitSel] = kinds(ui, "select");
+  const selects = kinds(ui, "select");
+  assert.equal(selects.length, 3, "an agent, a model, and the one question about sending");
+  const [agentSel, modelSel] = selects;
   assert.equal(agentSel[1].initialValue, "omp");
   assert.match(agentSel[1].options[0].hint, /30 sessions in your logs · tested/);
   assert.match(agentSel[1].options[2].hint, /not tested/);
@@ -99,30 +102,62 @@ test("accepting every default picks the default agent and the current model, sen
   assert.equal(state.ran[0].session.currentModel, "m2");
   assert.equal(state.started.length, 1, "the agent is started once and its session reused");
   assert.equal(state.ran[0].runDir, "/tmp/rebase-verify-agent-run-x");
-  assert.equal(state.submitted, 0, "the default of the last select is to exit");
-  assert.deepEqual(submitSel[1].options.map((o) => o.value), ["submit", "exit"]);
+  assert.equal(state.submitted, 1, "the default of the final question is to send");
 });
 
 test("the profile is built only from the chosen sources", async () => {
   const ui = fakeUi({ multiselect: [["omp"]] });
   const { deps, state } = fakeDeps();
   await run(ui, deps);
-  assert.deepEqual(state.prepared[0].bundles.map((b) => b.source), ["omp"]);
+  assert.deepEqual(state.prepared[0], ["omp"]);
   const agentSel = kinds(ui, "select")[0];
   assert.match(agentSel[1].options[1].hint, /10 sessions|0 sessions/);
 });
 
-test("choosing 'Send it to rebase now' runs the submit flow", async () => {
-  const ui = fakeUi({ select: [undefined, undefined, "submit"].map((v) => v) });
+test("the final question comes after the screen of who receives what, defaults to send, and asks once", async () => {
+  const ui = fakeUi();
   const { deps, state } = fakeDeps();
-  // an undefined answer falls back to the prompt's default
-  const orig = ui.select;
-  ui.select = async (o) => {
-    const v = await orig(o);
-    return v === undefined ? o.initialValue ?? o.options[0].value : v;
-  };
   assert.equal(await run(ui, deps), 0);
+  assert.equal(kinds(ui, "confirm").length, 1, "only the consent confirm; no confirm about sending");
+  const finals = kinds(ui, "select").slice(2);
+  assert.equal(finals.length, 1, "one question about sending, no second one");
+  const [, final] = finals[0];
+  assert.equal(final.initialValue, "send");
+  assert.equal(final.options[0].value, "send", "send is the first option");
+  assert.match(final.message, /^Send this profile to rebase\?/);
+  assert.match(final.message, /It is what rebase will see \(.*profile\.md\)/);
+  const at = (pred) => ui.calls.findIndex(pred);
+  const screen = at((c) => c[0] === "note" && c[2] === "What leaves your machine, and who receives it");
+  assert.ok(screen > -1, "the screen is shown");
+  assert.match(ui.calls[screen][1], /About to send to rebase/);
+  assert.ok(screen < at((c) => c === finals[0]), "the screen comes before the question");
   assert.equal(state.submitted, 1);
+  assert.deepEqual(kinds(ui, "outro").at(-1), ["outro", "Sent."]);
+});
+
+for (const [name, answers] of [
+  ["declining", { select: [undefined, undefined, "exit"] }],
+  ["cancelling (Ctrl-C)", { select: [undefined, undefined, CANCEL] }],
+]) {
+  test(`${name} the final question submits nothing and does not ask again`, async () => {
+    const ui = fakeUi(answers);
+    const { deps, state } = fakeDeps();
+    const code = await run(ui, deps);
+    assert.equal(code, name === "declining" ? 0 : 130);
+    assert.equal(state.submitted, 0);
+    assert.equal(kinds(ui, "select").length, 3);
+    assert.equal(kinds(ui, "confirm").length, 1);
+    if (name === "declining") assert.match(kinds(ui, "outro").at(-1)[1], /Nothing was sent\. To send it later: npx @letsrebase\/verify submit --yes/);
+    else assert.deepEqual(kinds(ui, "cancel").at(-1), ["cancel", "Stopped. Nothing was sent."]);
+  });
+}
+
+test("the screen before the question carries who receives what, and is the sub-command's own text", async () => {
+  const { sendNotice } = await import("../src/submit.mjs");
+  const text = sendNotice({ hub: "https://hub.test", profile: { volume: { sessions: 5, products: 2 }, projects: [{ artifact: { type: "url" } }, {}] }, cmd: "npx @letsrebase/verify" }).join("\n");
+  for (const part of ["About to send to rebase (https://hub.test)", "5 sessions, 2 products", "artifact links: 1", "Rebase S.r.l.", "kept at most 12 months", "NOT sent: raw logs", "submit --dry-run"]) {
+    assert.ok(text.includes(part), part);
+  }
 });
 
 for (const [name, answers, closes] of [
@@ -130,7 +165,7 @@ for (const [name, answers, closes] of [
   ["the agent select", { select: [CANCEL] }, 0],
   ["the model select", { select: [undefined, CANCEL] }, 1],
   ["the consent", { confirm: [CANCEL] }, 1],
-  ["the final select", { select: [undefined, undefined, CANCEL] }, 0],
+  ["the final question", { select: [undefined, undefined, CANCEL] }, 0],
 ]) {
   test(`Ctrl-C at ${name} exits 130 and closes the session it started`, async () => {
     const ui = fakeUi(answers);
@@ -142,7 +177,7 @@ for (const [name, answers, closes] of [
     };
     assert.equal(await run(ui, deps), 130);
     assert.deepEqual(kinds(ui, "cancel").at(-1), ["cancel", "Stopped. Nothing was sent."]);
-    if (name === "the final select") assert.equal(state.finished.length, 1, "the profile was already written");
+    if (name === "the final question") assert.equal(state.finished.length, 1, "the profile was already written");
     else assert.equal(state.finished.length, 0);
     assert.equal(state.closed, closes);
   });
@@ -280,6 +315,34 @@ test("the bin never starts the wizard without a TTY", () => {
   }
 });
 
+test("submit without --yes and without a TTY sends nothing and contacts no hub", async () => {
+  const home = mkdtempSync(join(tmpdir(), "rv-sub-"));
+  const cwd = mkdtempSync(join(tmpdir(), "rv-sub-cwd-"));
+  let hits = 0;
+  const hub = createServer((_req, res) => (hits++, res.end("{}")));
+  await new Promise((r) => hub.listen(0, "127.0.0.1", r));
+  try {
+    mkdirSync(join(cwd, "out"));
+    copyFileSync(fileURLToPath(new URL("./fixtures/candidate.sample.json", import.meta.url)), join(cwd, "out", "candidate.json"));
+    const child = spawn(process.execPath, [BIN, "submit", "--root", join(home, "none"), "--hub", `http://127.0.0.1:${hub.address().port}`], {
+      cwd, env: { ...process.env, HOME: home, USERPROFILE: home }, stdio: ["pipe", "pipe", "pipe"],
+    });
+    let out = "";
+    child.stdout.on("data", (d) => (out += d));
+    child.stderr.on("data", (d) => (out += d));
+    child.stdin.end();
+    const code = await new Promise((r) => child.on("close", r));
+    assert.equal(code, 0, out);
+    assert.match(out, /About to send to rebase/);
+    assert.match(out, /To confirm:.*submit --yes/);
+    assert.equal(hits, 0, "nothing reached the hub");
+  } finally {
+    hub.close();
+    rmSync(home, { recursive: true, force: true });
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
 test("the live status maps Ctrl-C to onCancel and restores the terminal", () => {
   const handlers = [];
   const writes = [];
@@ -409,7 +472,7 @@ test("the wizard refuses flags that belong to a sub-command", () => {
 });
 
 test("no SIGINT or SIGTERM listener is left when submit runs", async () => {
-  const ui = fakeUi({ select: [undefined, undefined, "submit"] });
+  const ui = fakeUi();
   const orig = ui.select;
   ui.select = async (o) => {
     const v = await orig(o);
@@ -463,19 +526,31 @@ test("the summary shows the narrative sentence and the absolute out/profile.md",
   assert.ok(note.includes(join("/work/out", "profile.md")));
 });
 
-test("sending asks whether profile.md was read; No goes back to the choice", async () => {
-  const ui = fakeUi({ select: [undefined, undefined, "submit", "exit"], confirm: [true, false] });
-  const orig = ui.select;
-  ui.select = async (o) => {
-    const v = await orig(o);
-    return v === undefined ? o.initialValue ?? o.options[0].value : v;
-  };
-  const { deps, state } = fakeDeps();
-  assert.equal(await run(ui, deps), 0);
-  const asks = kinds(ui, "confirm").filter((c) => /Have you read out\/profile\.md\? It is what rebase will see\./.test(c[1].message));
-  assert.equal(asks.length, 1);
+test("every wait of the run shows a spinner with a message that names the step", async () => {
+  const ui = fakeUi();
+  const { deps } = fakeDeps({
+    readSource: async (id, { onProgress }) => (onProgress({ done: 3, total: 12 }), read(id === "claude-code" ? 5 : 0)),
+    prepare: async (ids, { onStep }) => (onStep("Counting the work practices"), { narrativeInput: {}, practicesInput: null }),
+    finish: async (_run, { onStep }) => (onStep("Saving the profile"), { sessions: 1, products: 1, practices: [] }),
+  });
+  await run(ui, deps);
+  const messages = kinds(ui, "spinner.message").map((c) => c[1]);
+  assert.ok(messages.includes("Reading Claude Code (3 of 12 files)"));
+  assert.ok(messages.includes("Building your profile: counting the work practices"));
+  assert.ok(messages.includes("Assembling your profile: saving the profile"));
+  const started = kinds(ui, "spinner.start").map((c) => c[1]);
+  assert.deepEqual(started.slice(0, 3), ["Reading Claude Code", "Reading oh-my-pi", "Reading Codex"]);
+  assert.ok(started.includes("Building your profile from the logs"));
+  assert.ok(started.includes("Assembling your profile"));
+});
+
+test("a profile that cannot be assembled ends with the reason, exit 2, nothing sent", async () => {
+  const ui = fakeUi();
+  const { deps, state } = fakeDeps({ finish: async () => { throw new Error("out/practices.json is not valid JSON."); } });
+  assert.equal(await run(ui, deps), 2);
+  assert.ok(ui.calls.some((c) => c[0] === "log.error" && /not valid JSON/.test(c[1])));
   assert.equal(state.submitted, 0);
-  assert.equal(kinds(ui, "select").length, 4, "the choice was shown again");
+  assert.ok(kinds(ui, "spinner.error").some((c) => /Could not assemble your profile/.test(c[1])));
 });
 
 test("SIGHUP stops the run like SIGTERM, and the exit net restores the cursor", async () => {

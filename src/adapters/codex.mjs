@@ -232,7 +232,7 @@ const EMPTY = (root) => ({
   stats: { originatorCounts: {}, malformedLines: 0 },
 });
 
-export function readCodex(root) {
+export function readCodex(root, { onProgress } = {}) {
   if (!root || !existsSync(root)) return EMPTY(root);
 
   const files = [];
@@ -242,7 +242,9 @@ export function readCodex(root) {
   const originatorCounts = {};
   let malformedLinesTotal = 0;
 
-  for (const path of walk(root)) {
+  const paths = [...walk(root)];
+  for (const [i, path] of paths.entries()) {
+    onProgress?.({ done: i, total: paths.length });
     const buf = readFileSync(path);
     const relPath = relative(root, path);
     const lines = buf.toString("utf8").split("\n").filter((l) => l.trim());

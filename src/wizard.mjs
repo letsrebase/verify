@@ -11,7 +11,6 @@ import { AgentAuthError, AgentStartError, ModelNotOfferedError, ToolUseError } f
 import { RUN_SYSTEM } from "./agents/run.mjs";
 
 const REDRAW_MS = 100;
-const tick = () => new Promise((r) => setImmediate(r));
 const plural = (n, one, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 const kilo = (n) => (n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n));
 
@@ -104,8 +103,11 @@ const NO_AGENT_NOTE = [
 /**
  * @param {object} p
  * @param {object} p.ui clack: intro, outro, cancel, note, log, spinner, multiselect, select, confirm, isCancel
- * @param {object} p.deps sources, readSource, combine, availableAgents, defaultAgent, prepare,
- *   startAgent, runWithAgent, finish, submit
+ * @param {object} p.deps sources, availableAgents, defaultAgent, startAgent, runWithAgent, submit,
+ *   sendNotice() -> the text of the screen shown before the question about sending, and the
+ *   steps that read and compute, all async so the spinner keeps moving while they work:
+ *   readSource(id, { onProgress }) -> { sessions } | null, prepare(ids, { onStep }) -> { narrativeInput, practicesInput },
+ *   finish(run, { onStep }) -> { sessions, products, practices, summary }
  * @param {{ version?: string, agent?: string, model?: string }} p.flags
  * @returns {Promise<number>} the process exit code
  */
@@ -165,21 +167,23 @@ export async function runWizard({ ui, deps, flags = {}, out, proc = process, now
 
   ui.intro(`rebase-verify${flags.version ? ` ${flags.version}` : ""}`);
 
-  // 1. Sources, one spinner each so the counts appear as they finish.
+  // 1. Sources, one spinner each so the counts appear as they finish. The reading runs off the
+  // main thread (deps.readSource is async), so the spinner keeps moving and shows the files so far.
   const found = [];
   for (const src of deps.sources) {
     const s = ui.spinner();
     s.start(`Reading ${src.label}`);
-    await tick();
-    let bundle = null;
+    let read = null;
     try {
-      bundle = deps.readSource(src.id);
+      read = await deps.readSource(src.id, {
+        onProgress: ({ done, total }) => s.message(`Reading ${src.label} (${done} of ${plural(total, "file")})`),
+      });
     } catch {
-      bundle = null;
+      read = null;
     }
-    const n = bundle?.sessions?.length ?? 0;
-    s.stop(bundle ? `${src.label}: ${plural(n, "session")}` : `${src.label}: could not be read`);
-    if (n > 0) found.push({ ...src, bundle, count: n });
+    const n = read?.sessions ?? 0;
+    s.stop(read ? `${src.label}: ${plural(n, "session")}` : `${src.label}: could not be read`);
+    if (n > 0) found.push({ ...src, count: n });
   }
   if (!found.length) {
     ui.cancel("No sessions found in your logs, so there is nothing to build a profile from. Nothing was sent.");
@@ -198,10 +202,9 @@ export async function runWizard({ ui, deps, flags = {}, out, proc = process, now
   const sessionsBySource = Object.fromEntries(found.map((f) => [f.id, f.count]));
   const ps = ui.spinner();
   ps.start("Building your profile from the logs");
-  await tick();
   let prepared;
   try {
-    prepared = deps.prepare(deps.combine(picked.map((f) => f.bundle)));
+    prepared = await deps.prepare(picked.map((f) => f.id), { onStep: (m) => ps.message(`Building your profile: ${m.toLowerCase()}`) });
   } catch (e) {
     ps.error(`Could not build the profile: ${e.message}`);
     return 1;
@@ -366,7 +369,16 @@ export async function runWizard({ ui, deps, flags = {}, out, proc = process, now
     session = null;
 
     // 6. The profile.
-    const done = deps.finish(prepared, result);
+    const assembling = ui.spinner();
+    assembling.start("Assembling your profile");
+    let done;
+    try {
+      done = await deps.finish(result, { onStep: (m) => assembling.message(`Assembling your profile: ${m.toLowerCase()}`) });
+    } catch (e) {
+      assembling.error("Could not assemble your profile");
+      return await fail(e);
+    }
+    assembling.stop("Your profile is ready");
     const rows = (done.practices ?? []).map((p) => `  ${p.id}: seen in ${p.seen} of ${p.of}`);
     ui.note(
       [
@@ -378,27 +390,23 @@ export async function runWizard({ ui, deps, flags = {}, out, proc = process, now
       ].join("\n"),
       "Your profile",
     );
-    let next;
-    for (;;) {
-      next = await ui.select({
-        message: "What next?",
-        options: [
-          { value: "submit", label: "Send it to rebase now" },
-          { value: "exit", label: "Exit", hint: "send later with: npx @letsrebase/verify submit --yes" },
-        ],
-        initialValue: "exit",
-      });
-      if (await cancelled(next)) return 130;
-      if (next !== "submit") break;
-      const read = await ui.confirm({ message: "Have you read out/profile.md? It is what rebase will see.", initialValue: false });
-      if (await cancelled(read)) return 130;
-      if (read) break;
-    }
-    if (next === "submit") {
+    // The screen that says who receives what comes first and is never skipped; then one question,
+    // whose first and default answer is to send. Anything but that answer (no, Ctrl-C) sends nothing.
+    ui.note(deps.sendNotice(), "What leaves your machine, and who receives it");
+    const choice = await ui.select({
+      message: `Send this profile to rebase? It is what rebase will see (${join(out, "profile.md")}).`,
+      options: [
+        { value: "send", label: "Send it to rebase" },
+        { value: "exit", label: "Do not send", hint: "send later with: npx @letsrebase/verify submit --yes" },
+      ],
+      initialValue: "send",
+    });
+    if (await cancelled(choice)) return 130;
+    if (choice === "send") {
       await deps.submit();
       ui.outro("Sent.");
     } else {
-      ui.outro("Done. Nothing was sent.");
+      ui.outro("Done. Nothing was sent. To send it later: npx @letsrebase/verify submit --yes");
     }
     return 0;
   } finally {

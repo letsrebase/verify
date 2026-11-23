@@ -18,7 +18,7 @@ Node 20.12 or newer, one coding agent installed and signed in (or an Anthropic A
 npx @letsrebase/verify
 ```
 
-On a terminal this starts a short wizard. It lists the sources it found in your logs, asks which coding agent should write the narrative and classify the practices (the default is the tested agent with most sessions in your logs, on that agent's current model), shows a consent note, then runs with live progress. It asks nothing about who you are. Two files come out in `out/`: `profile.md` for humans, `candidate.json` for agents (plus working files described under "Work practices" and "Commands"). The wizard ends with a summary and a choice: submit now or later. You can keep the profile for yourself.
+On a terminal this starts a short wizard. It lists the sources it found in your logs, asks which coding agent should write the narrative and classify the practices (the default is the tested agent with most sessions in your logs, on that agent's current model), shows a consent note, then runs with live progress. It asks nothing about who you are. Two files come out in `out/`: `profile.md` for humans, `candidate.json` for agents (plus working files described under "Work practices" and "Commands"). The wizard ends with a summary, a screen that says who receives what and for how long, and one question: send (the first option, so Enter sends) or not. Answering no, or pressing Ctrl-C, sends nothing; you can keep the profile for yourself and send it later with `submit --yes`. Every wait shows a spinner that names its step.
 
 To submit later:
 
@@ -183,7 +183,7 @@ If you spot something we should change, [open an issue](https://github.com/letsr
 
 | | |
 |---|---|
-| `npx @letsrebase/verify` | on a terminal, the wizard: finds your sources, lets you pick the agent and the model, writes and classifies the profile, shows a summary, then submits now or later |
+| `npx @letsrebase/verify` | on a terminal, the wizard: finds your sources, lets you pick the agent and the model, writes and classifies the profile, shows a summary and who receives it, then asks once whether to send |
 | `generate --agent <id> --model <id>` | the same without the wizard, for scripts; add `--yes` to skip every prompt |
 | `generate` *(default)* | full profile, locally; with `ANTHROPIC_API_KEY` set, the key sends the practices sample, and the narrative input unless `--narrative-file` is given, to Anthropic |
 | `prepare` | `out/narrative-input.json`, for writing the narrative manually, and `out/practices-input.json` with `out/practices-sample.json` for the model practices; `finalize` must get the same `--tz` |

@@ -53,9 +53,11 @@ export const SOURCES = [
 /**
  * Read one source by its id (see SOURCES) with agent-run transcripts dropped,
  * or null when `sources.<id>.disabled`. Same roots and flags as readAllSources.
+ * `onProgress({ done, total })` is called as the files of the source are read, for the
+ * sources that are files (the sqlite ones are read in one query).
  */
-export function readSource(id, { claudeRoot, sources }) {
-  if (id === "claude-code") return dropAgentRuns(readClaudeCode(claudeRoot));
+export function readSource(id, { claudeRoot, sources, onProgress }) {
+  if (id === "claude-code") return dropAgentRuns(readClaudeCode(claudeRoot, { onProgress }));
   const o = sources?.[id] ?? {};
   if (o.disabled) return null;
   switch (id) {
@@ -66,9 +68,9 @@ export function readSource(id, { claudeRoot, sources }) {
       const root = o.root ?? defaultOpencodeRoot();
       return dropAgentRuns(o.json ? readOpencodeJson(root) : readOpencode(root));
     }
-    case "codex": return dropAgentRuns(readCodex(o.root ?? defaultCodexRoot()));
-    case "pi": return dropAgentRuns(readPi(o.root ?? defaultPiRoot()));
-    case "omp": return dropAgentRuns(readOmp(o.root ?? defaultOmpRoot()));
+    case "codex": return dropAgentRuns(readCodex(o.root ?? defaultCodexRoot(), { onProgress }));
+    case "pi": return dropAgentRuns(readPi(o.root ?? defaultPiRoot(), { onProgress }));
+    case "omp": return dropAgentRuns(readOmp(o.root ?? defaultOmpRoot(), { onProgress }));
     case "cursor": return dropAgentRuns(readCursor(o.root ?? defaultCursorRoot()));
     case "kimi": return dropAgentRuns(readKimi(o.root ?? defaultKimiRoot()));
     default: throw new Error(`unknown source: ${id}`);
@@ -80,10 +82,10 @@ export function combineSources(bundles) {
   return bundles.length > 1 ? mergeSources(...bundles) : bundles[0];
 }
 
-export function readAllSources({ claudeRoot, sources }) {
+export function readAllSources({ claudeRoot, sources, onProgress }) {
   const bundles = [];
   for (const { id } of SOURCES) {
-    const b = readSource(id, { claudeRoot, sources });
+    const b = readSource(id, { claudeRoot, sources, onProgress: onProgress && ((p) => onProgress({ ...p, source: id })) });
     // claude-code is always part of the result; the others only when they have sessions.
     if (b && (id === "claude-code" || b.sessions.length)) bundles.push(b);
   }

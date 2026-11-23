@@ -54,6 +54,6 @@ function isTopLevelSession(relPath) {
   return parts.length === 2 && !parts[1].includes("__advisor");
 }
 
-export function readOmp(root) {
-  return readPiFormat(root, { source: "omp", mapTool: mapOmpTool, includeFile: isTopLevelSession });
+export function readOmp(root, { onProgress } = {}) {
+  return readPiFormat(root, { source: "omp", mapTool: mapOmpTool, includeFile: isTopLevelSession, onProgress });
 }

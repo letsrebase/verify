@@ -235,14 +235,14 @@ const EMPTY = (root, source = "pi") => ({
   stats: { malformedLines: 0, projectDirCount: 0 },
 });
 
-export function readPi(root) {
-  return readPiFormat(root, { source: "pi" });
+export function readPi(root, { onProgress } = {}) {
+  return readPiFormat(root, { source: "pi", onProgress });
 }
 
 // pi's on-disk format is shared by oh-my-pi (omp), a pi fork. The omp adapter
 // calls this with its own source label, tool-name mapper and file filter; real
 // pi goes through readPi above with the defaults, behaviour unchanged.
-export function readPiFormat(root, { source = "pi", mapTool = piMapTool, includeFile = () => true } = {}) {
+export function readPiFormat(root, { source = "pi", mapTool = piMapTool, includeFile = () => true, onProgress } = {}) {
   if (!root || !existsSync(root)) return EMPTY(root, source);
 
   const files = [];
@@ -253,8 +253,9 @@ export function readPiFormat(root, { source = "pi", mapTool = piMapTool, include
   let malformedLinesTotal = 0;
   const projectDirs = new Set();
 
-  for (const path of walk(root)) {
-    if (!includeFile(relative(root, path))) continue;
+  const paths = [...walk(root)].filter((path) => includeFile(relative(root, path)));
+  for (const [i, path] of paths.entries()) {
+    onProgress?.({ done: i, total: paths.length });
     const buf = readFileSync(path);
     const relPath = relative(root, path);
     const lines = buf.toString("utf8").split("\n").filter((l) => l.trim());
