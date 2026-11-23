@@ -216,7 +216,7 @@ test("null spans render as n/a, not null→null", () => {
       { repo: "undated", selected: true, type: ["feature-work"], from: null, to: null, sessions: 2, userMessages: 4, tech: [], landing: {}, researchToMutation: null, delegation: 0, topAreas: {} },
       { repo: "inv", selected: false, type: ["feature-work"], from: null, to: null, sessions: 1, userMessages: 1, tech: [], landing: {}, researchToMutation: null, delegation: 0, topAreas: {} },
     ],
-    narrative: null, fingerprint: { totals: {} }, forensics: { score: 100 }, manifestHash: "h",
+    narrative: null, fingerprint: { totals: {} }, forensics: { score: 100 }, manifestHash: "h", language: "en",
   });
   const md = renderMarkdown(p);
   assert.match(md, /n\/a→n\/a/);

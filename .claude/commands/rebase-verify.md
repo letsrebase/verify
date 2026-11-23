@@ -16,6 +16,7 @@ The default is **save, don't submit**. Submitting is a separate, explicit action
    ```
    node bin/rebase-verify.mjs prepare
    ```
+   The profile is written in Italian unless the candidate asks for another language: then append `--lang <code>` (`it` or `en`). `finalize` reads the language back from `out/narrative-input.json`.
    If the candidate opted into a local timezone in step 1, append `--tz <zone>` here AND to the `finalize` call in step 6. `prepare` and `finalize` must use the same `--tz`: the sampled sessions in `out/practices-sample.json` and every day and month count are bucketed in that zone, and `finalize` re-reads the logs.
    Show the candidate the line `… representative: …` from the output. This is the auto-selection of representative projects, 3 to 5, adaptive: flagships by significance, plus a 4th/5th slot only when a project adds a new primary type or comparable significance. `--top N` forces a fixed count if the candidate asks.
 
@@ -58,7 +59,7 @@ The default is **save, don't submit**. Submitting is a separate, explicit action
    - **No proper names.** No companies, clients, people, products, brands, repositories. Describe each project ONLY by abstract domain and context.
    - Use only the data provided in `out/narrative-input.json`. No invention, no hyperbole.
    - Evidence-based: claims supported by signals (areas, stack, landing, prompts, commits).
-   - English, dry, readable. No emojis, no em dashes.
+   - Write every text in the language `out/narrative-input.json` names in `languageName` (its `language` code is `it` for Italian, `en` for English; Italian unless the candidate passed `--lang`). Dry, readable. Technology, product, library and method names stay as written. Write numbers as plain digits exactly as they appear in the data, with no thousands separator. The JSON keys stay as shown. No emojis, no em dashes.
    - Length: summary ≤ 60 words; cognitive narrative ≤ 130 words; learning summary ≤ 40 words; ai_relationship / intensity / distribution narratives ≤ 50 words each; per-project domain ≤ 60 words; per-project `did` ≤ 60 words.
    - Domains rollup: 3-5 entries. Assign every product in `domainEvidence` to exactly one domain; the summed `products` and `sessions` across domains must not exceed the profile totals (groundedness checks this). Labels abstract, counts only, never names.
 

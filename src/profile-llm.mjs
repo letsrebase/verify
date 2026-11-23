@@ -9,16 +9,17 @@
 
 import { readFileSync } from "node:fs";
 import { firstJsonObject } from "./agents/json-answer.mjs";
+import { DEFAULT_LANGUAGE, LANGUAGES } from "./languages.mjs";
 
 export const MODEL = "claude-opus-4-7";
 
-export const NARRATIVE_SYSTEM = `You write a candidate's work profile from the logs of their activity with AI development tools.
+const NARRATIVE_PROMPT = `You write a candidate's work profile from the logs of their activity with AI development tools.
 
 HARD RULES:
 - NO proper names: no companies, clients, people, products, brands, or repositories. Describe each project ONLY by abstract domain and context (e.g. "talent and campaigns management platform", not the actual product name). Exception: the agent CLI names in the orchestration data (e.g. Claude Code, opencode, codex, aider) are tools, not client brands — you may name them when citing the per-CLI split.
 - Use only the data provided. No invention, no empty praise, no hyperbolic adjectives.
 - Concrete and evidence-based: every claim must rest on signals in the digest (areas touched, stack, landing signals, prompts, commits).
-- English, dry, readable by a human. No emojis, no em dashes.
+- Write every text in {LANGUAGE}: dry, readable by a human. Technology, product, library and method names stay as written. Write numbers as plain digits exactly as they appear in the data, with no thousands separator. The JSON keys stay as shown. No emojis, no em dashes.
 
 You receive a JSON with the selected projects (opaque ids p1, p2, ...), each with: type, span, volumes, code areas, stack, landing signals (commits/reverts/checks), an orchestration block, web-search topics, sampled prompts, and LOCAL repo context (description, docs, dependencies, commit subjects).
 
@@ -66,6 +67,9 @@ Reply ONLY with a valid JSON in this shape:
   "projects": [ { "id": "p1", "domain": "abstract domain", "did": "2-3 sentences on what they did", "why_representative": "1 sentence" } ]
 }`;
 
+// The narrative prompt for a language code from src/languages.mjs.
+export const narrativeSystem = (language = DEFAULT_LANGUAGE) => NARRATIVE_PROMPT.replace("{LANGUAGE}", LANGUAGES[language].name);
+
 // Scrub probable proper nouns from the prompt samples we hand to the model
 // as evidence. The LLM has a hard anti-naming rule but we don't rely on
 // soft constraints alone: replace capitalised tokens (not at sentence start)
@@ -84,8 +88,11 @@ function scrubExamples(examples) {
   };
 }
 
-function narrativeInput(selected, enrichments, trajectory, compactionSummaries, aiRelationship, agenticLiteracy, intensity, distribution, allProjects) {
+function narrativeInput(selected, enrichments, trajectory, compactionSummaries, aiRelationship, agenticLiteracy, intensity, distribution, allProjects, language) {
   return {
+    // The language the prose is written in: the prompt names it, and the slash command reads it here.
+    language,
+    languageName: LANGUAGES[language].name,
     // Compact per-product evidence across ALL products (not just the selected
     // ones) so the model can derive the aggregate domains. Local-only input;
     // the output side carries abstract labels and counts, never names.
@@ -172,7 +179,7 @@ async function postMessage(key, system, user, maxTokens, signal) {
 }
 
 async function callAnthropic(input, key) {
-  const text = await postMessage(key, NARRATIVE_SYSTEM, JSON.stringify(input), 3000);
+  const text = await postMessage(key, narrativeSystem(input.language), JSON.stringify(input), 3000);
   return firstJsonObject(text);
 }
 
@@ -228,8 +235,8 @@ export function validateNarrative(n, ctx) {
 
 // Builds the narrative input only. Never touches the network, so `prepare`
 // can call it whatever the environment holds.
-export function narrativeInputFor(selected, enrichments, { trajectory, compactionSummaries, aiRelationship, agenticLiteracy, intensity, distribution, allProjects } = {}) {
-  return narrativeInput(selected, enrichments, trajectory, compactionSummaries, aiRelationship, agenticLiteracy, intensity, distribution, allProjects);
+export function narrativeInputFor(selected, enrichments, { trajectory, compactionSummaries, aiRelationship, agenticLiteracy, intensity, distribution, allProjects, language = DEFAULT_LANGUAGE } = {}) {
+  return narrativeInput(selected, enrichments, trajectory, compactionSummaries, aiRelationship, agenticLiteracy, intensity, distribution, allProjects, language);
 }
 
 // Returns { narrative, input, source }. narrative is null if no key and no
@@ -237,8 +244,8 @@ export function narrativeInputFor(selected, enrichments, { trajectory, compactio
 // An explicit --narrative-file always wins over the env key: the API path
 // sends the narrative input off-machine, so it must never engage silently
 // or discard a hand-curated narrative just because a key is in the env.
-export async function generateNarrative(selected, enrichments, { overrideFile, trajectory, compactionSummaries, aiRelationship, agenticLiteracy, intensity, distribution, allProjects } = {}) {
-  const input = narrativeInputFor(selected, enrichments, { trajectory, compactionSummaries, aiRelationship, agenticLiteracy, intensity, distribution, allProjects });
+export async function generateNarrative(selected, enrichments, { overrideFile, trajectory, compactionSummaries, aiRelationship, agenticLiteracy, intensity, distribution, allProjects, language } = {}) {
+  const input = narrativeInputFor(selected, enrichments, { trajectory, compactionSummaries, aiRelationship, agenticLiteracy, intensity, distribution, allProjects, language });
   if (overrideFile) return { narrative: validateNarrative(JSON.parse(readFileSync(overrideFile, "utf8")), overrideFile), input, source: "file" };
   const key = process.env.ANTHROPIC_API_KEY;
   if (key) {

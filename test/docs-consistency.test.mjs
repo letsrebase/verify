@@ -12,6 +12,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
+import { labelsFor } from "../src/languages.mjs";
 
 const command = readFileSync(new URL("../.claude/commands/rebase-verify.md", import.meta.url), "utf8");
 const profileSrc = readFileSync(new URL("../src/profile.mjs", import.meta.url), "utf8");
@@ -183,8 +184,8 @@ test("PRIVACY §2 discloses the practices counts", () => {
 });
 
 test("README and the slash command name the profile section the code writes", () => {
-  const heading = /L\.push\(`\\n## (How the work is done)`\)/.exec(profileSrc)?.[1];
-  assert.ok(heading, "src/profile.mjs no longer writes the practices heading");
+  const heading = labelsFor("en").practices;
+  assert.ok(profileSrc.includes("## ${T.practices}"), "src/profile.mjs no longer writes the practices heading");
   assert.ok(readme.includes(`"${heading}"`), "README does not name the heading");
   assert.ok(command.includes(`"${heading}"`), "slash command does not name the heading");
 });

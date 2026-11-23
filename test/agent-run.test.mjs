@@ -11,7 +11,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { RUN_SYSTEM, runWithAgent } from "../src/agents/run.mjs";
 import { AgentAuthError, ModelNotOfferedError, ToolUseError, startAgent } from "../src/agents/acp.mjs";
 import { AGENT_RUN_MARKER } from "../src/agent-run.mjs";
-import { MODEL, NARRATIVE_SYSTEM } from "../src/profile-llm.mjs";
+import { MODEL, narrativeSystem } from "../src/profile-llm.mjs";
 import { PRACTICES_BATCH, practicesPrompt } from "../src/practices-llm.mjs";
 import { MODEL_PRACTICE_CANDIDATES, PUBLISHED_MODEL_IDS, RUBRIC } from "../src/practices-rules.mjs";
 import { assembleProfile } from "../src/profile.mjs";
@@ -23,7 +23,7 @@ const BIN = fileURLToPath(new URL("../bin/rebase-verify.mjs", import.meta.url));
 const ids = MODEL_PRACTICE_CANDIDATES.map((p) => p.id);
 
 const sessions = (n) => Array.from({ length: n }, (_, i) => ({ id: `s${String(i + 1).padStart(2, "0")}`, messages: ["first", "second"] }));
-const narrativeInput = { domainEvidence: [], projects: [{ id: "p1", type: ["web"] }] };
+const narrativeInput = { language: "it", domainEvidence: [], projects: [{ id: "p1", type: ["web"] }] };
 const practicesInput = (n) => ({ practices: MODEL_PRACTICE_CANDIDATES, sessions: sessions(n) });
 
 // A registry-shaped entry that starts the fake agent; its FAKE_* script comes from process.env.
@@ -88,7 +88,8 @@ test("one session writes the narrative, then classifies every batch, and names w
   assert.deepEqual(result.used, { agent: "fake-agent", model: "m2" });
   assert.equal(log.filter((l) => l.dir === "out" && l.msg?.method === "initialize").length, 1, "one session for both steps");
   assert.equal(prompts.length, 1 + Math.ceil(12 / PRACTICES_BATCH));
-  assert.ok(prompts[0].startsWith(`${RUN_SYSTEM}\n\n${NARRATIVE_SYSTEM}`), "the narrative turn opens with the narrative prompt");
+  assert.ok(prompts[0].startsWith(`${RUN_SYSTEM}\n\n${narrativeSystem("it")}`), "the narrative turn opens with the narrative prompt");
+  assert.match(prompts[0], /Write every text in Italian/, "the prompt names the language");
   assert.ok(prompts[0].endsWith(JSON.stringify(narrativeInput)));
   assert.ok(prompts[1].startsWith(`${RUN_SYSTEM}\n\n${practicesPrompt(MODEL_PRACTICE_CANDIDATES)}`));
   assert.deepEqual(JSON.parse(prompts[1].split("\n").pop()).practices, ids);

@@ -63,20 +63,41 @@ const COGNITIVE_TAGS = [
   "research-first","decomposer","orchestrator","verification-heavy","risk-calibrated",
 ];
 
+// How a language writes numbers: the thousands separator and the decimal mark.
+// A profile with no `language` predates the field and was written in English.
+const NUMBER_FORMATS = {
+  it: { group: ".", decimal: "," },
+  en: { group: ",", decimal: "." },
+};
+const DEFAULT_NUMBER_LANGUAGE = "en";
+
+// Read one numeric token ("1.168", "12,5") the way `language` writes it.
+// Returns NaN for a token that is not a number in that language.
+function parseNumber(raw, language) {
+  const { group, decimal } = NUMBER_FORMATS[language] ?? NUMBER_FORMATS[DEFAULT_NUMBER_LANGUAGE];
+  const esc = (c) => `\\${c}`;
+  const grouped = new RegExp(`^\\d{1,3}(?:${esc(group)}\\d{3})+(?:${esc(decimal)}\\d+)?$`);
+  let t = raw;
+  if (grouped.test(t)) t = t.split(group).join("");
+  t = t.replace(decimal, ".");
+  return /^\d+(?:\.\d+)?$/.test(t) ? Number(t) : NaN;
+}
+
 // Extract candidate ANCHORS from a chunk of prose.
-function extractAnchors(text) {
+function extractAnchors(text, language = DEFAULT_NUMBER_LANGUAGE) {
   if (!text || typeof text !== "string") return [];
   const anchors = [];
 
   // Numbers that look meaningful (>1 digit OR followed by a unit/word).
-  for (const m of text.matchAll(/\b\d{1,5}(?:[.,]\d+)?\b/g)) {
-    const n = Number(m[0].replace(",", "."));
+  for (const m of text.matchAll(/\b\d{1,5}(?:[.,]\d+)*\b/g)) {
+    const n = parseNumber(m[0], language);
     if (Number.isFinite(n) && n >= 2) anchors.push({ kind: "number", value: n, raw: m[0] });
   }
 
   // Percentages.
-  for (const m of text.matchAll(/(\d{1,3})\s*%/g)) {
-    anchors.push({ kind: "percent", value: Number(m[1]) / 100, raw: m[0] });
+  for (const m of text.matchAll(/(?<![\d.,])(\d{1,3}(?:[.,]\d+)?)\s*%/g)) {
+    const n = parseNumber(m[1], language);
+    if (Number.isFinite(n)) anchors.push({ kind: "percent", value: n / 100, raw: m[0] });
   }
 
   // Year-months (2026-03, 2026-Q1).
@@ -301,13 +322,14 @@ function classifyTextFields(profile) {
 export function assessGroundedness(profile) {
   const pool = collectSupportPool(profile);
   const fields = classifyTextFields(profile);
+  const language = profile?.language ?? DEFAULT_NUMBER_LANGUAGE;
 
   let total = 0;
   let supported = 0;
   const anomalies = [];
 
   for (const f of fields) {
-    const anchors = extractAnchors(f.text);
+    const anchors = extractAnchors(f.text, language);
     for (const a of anchors) {
       total++;
       let ok = false;

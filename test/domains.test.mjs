@@ -22,6 +22,7 @@ function profileWith(domains) {
     contact: { name: "X" },
     projects: [proj("a", 6, true), proj("b", 3), proj("c", 1)],
     narrative: { ...baseNarrative, domains },
+    language: "en",
   });
 }
 

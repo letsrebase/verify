@@ -53,6 +53,7 @@ import { selectRepresentatives, assembleProfile, renderMarkdown, summarizeSource
 import { resolveHub } from "../src/hub.mjs";
 import { submitProfile, buildPayload } from "../src/submit.mjs";
 import { buildTrajectory } from "../src/trajectory.mjs";
+import { DEFAULT_LANGUAGE, SUPPORTED_LANGUAGES, isSupportedLanguage } from "../src/languages.mjs";
 import { assessGroundedness } from "../src/groundedness.mjs";
 import { assessStructure, assessAgainstLogs, submitBlockers } from "../src/consistency.mjs";
 import { computeAiRelationship } from "../src/ai-relationship.mjs";
@@ -120,6 +121,13 @@ try {
   new Intl.DateTimeFormat("en-CA", { timeZone: tzFlag }).format(0);
 } catch {
   console.error(`Invalid --tz "${tzFlag}". Expected an IANA timezone, e.g. UTC or Europe/Rome.`);
+  process.exit(2);
+}
+
+// Validate --lang the same way: the language is the profile's, so it is checked before anything is read.
+const langFlag = flag("lang", DEFAULT_LANGUAGE);
+if (!isSupportedLanguage(langFlag)) {
+  console.error(`Invalid --lang "${langFlag}". Expected one of: ${SUPPORTED_LANGUAGES.join(", ")}.`);
   process.exit(2);
 }
 
@@ -330,6 +338,7 @@ const narrativeOptionsOf = (i) => ({
   distribution: i.distribution,
   allProjects: i.projects,
   compactionSummaries: i.parsed.compactionSummaries,
+  language: langFlag,
 });
 
 // The model-classified practices: written only when some are published and
@@ -361,6 +370,7 @@ async function cmdGenerate() {
     distribution,
     allProjects: projects,
     compactionSummaries: parsed.compactionSummaries,
+    language: langFlag,
   };
   let practices;
   let narrative;
@@ -407,9 +417,10 @@ function assembleWithGroundedness(args) {
   if (args.narrative && args.trajectory?.vocabularyCandidates?.length && !args.narrative.trajectory?.vocabulary_adopted?.length) {
     warn(`      note: the narrative has no trajectory.vocabulary_adopted, newVocabulary stays empty (raw candidates are never used; re-run the narrative step to fill it)`);
   }
-  const draft = assembleProfile(args);
+  const withLanguage = { language: langFlag, ...args };
+  const draft = assembleProfile(withLanguage);
   const groundedness = assessGroundedness(draft);
-  return assembleProfile({ ...args, groundedness });
+  return assembleProfile({ ...withLanguage, groundedness });
 }
 
 async function cmdPrepare() {
@@ -424,6 +435,7 @@ async function cmdPrepare() {
     distribution,
     allProjects: projects,
     compactionSummaries: parsed.compactionSummaries,
+    language: langFlag,
   });
   writeFileSync(join(out, "narrative-input.json"), JSON.stringify(input, null, 2));
   console.log(`Wrote ${OUT_DIR}/narrative-input.json.`);
@@ -456,6 +468,15 @@ function mergePracticesAnswers(out, codeBlock, classifiedBy) {
   }
 }
 
+function preparedLanguage(out) {
+  try {
+    const code = JSON.parse(readFileSync(join(out, "narrative-input.json"), "utf8")).language;
+    return isSupportedLanguage(code) ? code : null;
+  } catch {
+    return null;
+  }
+}
+
 async function cmdFinalize() {
   console.log(`\nrebase-verify finalize\n`);
   const narrativeFile = flag("narrative-file", join(outPath(), "narrative.json"));
@@ -465,6 +486,8 @@ async function cmdFinalize() {
   }
   const { parsed, fingerprint, forensics, projects, selected, enrichments, trajectory, aiRelationship, agenticLiteracy, intensity, distribution, techUsage, practices, sources, out } = await loadProfileInputs();
   const merged = mergePracticesAnswers(out, practices, SLASH_COMMAND);
+  // The narrative was written in the language `prepare` put in narrative-input.json; an explicit --lang wins.
+  const language = has("lang") ? langFlag : preparedLanguage(out) ?? langFlag;
   const { narrative } = await generateNarrative(selected, enrichments, {
     overrideFile: narrativeFile,
     trajectory,
@@ -474,8 +497,10 @@ async function cmdFinalize() {
     distribution,
     allProjects: projects,
     compactionSummaries: parsed.compactionSummaries,
+    language,
   });
   writeProfile(out, assembleWithGroundedness({
+    language,
     projects, narrative, fingerprint, forensics, trajectory, aiRelationship, agenticLiteracy, intensity, distribution, techUsage, practices: merged, sources,
     generatedBy: { narrative: SLASH_COMMAND },
     manifestHash: fingerprint.manifest.bundleHash,
